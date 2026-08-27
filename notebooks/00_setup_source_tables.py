@@ -8,10 +8,10 @@
 # MAGIC # 00 — Setup Source Tables
 # MAGIC
 # MAGIC **What this notebook does:**
-# MAGIC 1. Creates the Unity Catalog schema `main.palm_learning_dev` (one-time setup)
+# MAGIC 1. Creates the Unity Catalog schema `workspace.palm_learning_dev` (one-time setup)
 # MAGIC 2. Runs `data_generator.py` to populate two source tables:
-# MAGIC    - `main.palm_learning_dev.experiment_user_assignments`
-# MAGIC    - `main.palm_learning_dev.experiment_config`
+# MAGIC    - `workspace.palm_learning_dev.experiment_user_assignments`
+# MAGIC    - `workspace.palm_learning_dev.experiment_config`
 # MAGIC 3. Previews both tables so we can confirm data looks correct before running the pipeline
 # MAGIC
 # MAGIC Run this notebook **once** before running any pipeline scripts.
@@ -84,7 +84,7 @@ dg.main()
 print("=" * 60)
 print("experiment_user_assignments — first 10 rows")
 print("=" * 60)
-df_assignments = spark.table("main.palm_learning_dev.experiment_user_assignments")
+df_assignments = spark.table("workspace.palm_learning_dev.experiment_user_assignments")
 print(f"Total rows: {df_assignments.count()}")
 display(df_assignments.limit(10))
 
@@ -93,7 +93,7 @@ display(df_assignments.limit(10))
 print("=" * 60)
 print("experiment_config — all rows")
 print("=" * 60)
-df_config = spark.table("main.palm_learning_dev.experiment_config")
+df_config = spark.table("workspace.palm_learning_dev.experiment_config")
 display(df_config)
 
 # COMMAND ----------
