@@ -1,4 +1,9 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# base_environment = "databricks_ai_v5"
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 00 — Setup Source Tables
 # MAGIC
@@ -19,8 +24,14 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE SCHEMA IF NOT EXISTS minipalm.palm_learning_dev;
-# MAGIC SHOW SCHEMAS IN minipalm;
+# MAGIC SHOW CATALOGS;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE SCHEMA IF NOT EXISTS workspace.palm_learning_dev;
+# MAGIC
+# MAGIC SHOW SCHEMAS IN workspace;
 
 # COMMAND ----------
 
@@ -73,7 +84,7 @@ dg.main()
 print("=" * 60)
 print("experiment_user_assignments — first 10 rows")
 print("=" * 60)
-df_assignments = spark.table("minipalm.palm_learning_dev.experiment_user_assignments")
+df_assignments = spark.table("main.palm_learning_dev.experiment_user_assignments")
 print(f"Total rows: {df_assignments.count()}")
 display(df_assignments.limit(10))
 
