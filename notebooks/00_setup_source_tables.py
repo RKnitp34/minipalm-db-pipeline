@@ -29,9 +29,9 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE SCHEMA IF NOT EXISTS workspace.palm_learning_dev;
+# MAGIC CREATE SCHEMA IF NOT EXISTS minipalm.palm_learning_dev;
 # MAGIC
-# MAGIC SHOW SCHEMAS IN workspace;
+# MAGIC SHOW SCHEMAS IN minipalm;
 
 # COMMAND ----------
 
@@ -84,7 +84,7 @@ dg.main()
 print("=" * 60)
 print("experiment_user_assignments — first 10 rows")
 print("=" * 60)
-df_assignments = spark.table("main.palm_learning_dev.experiment_user_assignments")
+df_assignments = spark.table("minipalm.palm_learning_dev.experiment_user_assignments")
 print(f"Total rows: {df_assignments.count()}")
 display(df_assignments.limit(10))
 
@@ -93,7 +93,7 @@ display(df_assignments.limit(10))
 print("=" * 60)
 print("experiment_config — all rows")
 print("=" * 60)
-df_config = spark.table("main.palm_learning_dev.experiment_config")
+df_config = spark.table("minipalm.palm_learning_dev.experiment_config")
 display(df_config)
 
 # COMMAND ----------
