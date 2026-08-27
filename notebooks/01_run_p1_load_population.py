@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 01 — P1: Load Experiment Population
 # MAGIC
@@ -82,3 +86,6 @@ display(
 # MAGIC ✅ You should see ~500 users per experiment split across 3 arms (control / treatment_1 / treatment_2).
 # MAGIC
 # MAGIC **Next step:** Open `notebooks/02_run_p2_watch_hours.py`
+
+# COMMAND ----------
+

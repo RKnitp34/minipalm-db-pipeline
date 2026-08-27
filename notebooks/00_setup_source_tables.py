@@ -10,8 +10,8 @@
 # MAGIC **What this notebook does:**
 # MAGIC 1. Creates the Unity Catalog schema `workspace.palm_learning_dev` (one-time setup)
 # MAGIC 2. Runs `data_generator.py` to populate two source tables:
-# MAGIC    - `workspace.palm_learning_dev.experiment_user_assignments`
-# MAGIC    - `workspace.palm_learning_dev.experiment_config`
+# MAGIC    - `minipalm.palm_learning_dev.experiment_user_assignments`
+# MAGIC    - `minipalm.palm_learning_dev.experiment_config`
 # MAGIC 3. Previews both tables so we can confirm data looks correct before running the pipeline
 # MAGIC
 # MAGIC Run this notebook **once** before running any pipeline scripts.
