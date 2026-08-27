@@ -5,7 +5,7 @@
 # MAGIC **What this notebook does:**
 # MAGIC - Reads `experiment_user_assignments` + `experiment_config`
 # MAGIC - Joins on `experiment_uuid`, deduplicates users, drops nulls
-# MAGIC - Writes to `workspace.palm_learning_dev.eval_experiment_population`
+# MAGIC - Writes to `minipalm.palm_learning_dev.eval_experiment_population`
 # MAGIC
 # MAGIC **Prerequisite:** Run `00_setup_source_tables` first.
 
@@ -56,7 +56,7 @@ for exp_uuid in ["exp-001-disney-midroll", "exp-002-hulu-preroll"]:
 
 # COMMAND ----------
 
-df_pop = spark.table("workspace.palm_learning_dev.eval_experiment_population")
+df_pop = spark.table("minipalm.palm_learning_dev.eval_experiment_population")
 print(f"Total rows: {df_pop.count()}")
 display(df_pop.limit(20))
 
