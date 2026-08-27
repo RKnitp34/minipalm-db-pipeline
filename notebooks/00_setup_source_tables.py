@@ -1,4 +1,9 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# base_environment = "databricks_ai_v5"
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 00 — Setup Source Tables
 # MAGIC
@@ -24,8 +29,8 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE SCHEMA IF NOT EXISTS workspace.palm_learning_dev;
-# MAGIC SHOW SCHEMAS IN workspace;
+# MAGIC CREATE SCHEMA IF NOT EXISTS minipalm.palm_learning_dev;
+# MAGIC SHOW SCHEMAS IN minipalm;
 
 # COMMAND ----------
 
@@ -68,7 +73,7 @@ dg.main()
 print("=" * 60)
 print("experiment_user_assignments — first 10 rows")
 print("=" * 60)
-df_assignments = spark.table("workspace.palm_learning_dev.experiment_user_assignments")
+df_assignments = spark.table("minipalm.palm_learning_dev.experiment_user_assignments")
 print(f"Total rows: {df_assignments.count()}")
 display(df_assignments.limit(10))
 
@@ -77,7 +82,7 @@ display(df_assignments.limit(10))
 print("=" * 60)
 print("experiment_config — all rows")
 print("=" * 60)
-df_config = spark.table("workspace.palm_learning_dev.experiment_config")
+df_config = spark.table("minipalm.palm_learning_dev.experiment_config")
 display(df_config)
 
 # COMMAND ----------
@@ -96,6 +101,10 @@ display(
     .agg(count("*").alias("user_count"))
     .orderBy("experiment_uuid", "treatment_arm")
 )
+
+# COMMAND ----------
+
+print("rakesh")
 
 # COMMAND ----------
 
