@@ -1,0 +1,47 @@
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+.env.*
+*.token
+*.secret
+.databrickscfg
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Local data (parquet previews from --local runs) ──────────────────────────
+data/
+
+# ── Testing / linting cache ───────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Databricks bundle state (generated on deploy, not needed in repo) ─────────
+.databricks/
