@@ -120,7 +120,9 @@ def _gen_experiment_config() -> pd.DataFrame:
 
 def _write_delta(pdf: pd.DataFrame, table_fqn: str) -> None:
     """Convert pandas → Spark and write as Delta (overwrite)."""
-    sdf = spark.createDataFrame(pdf)  # noqa: F821  # spark is in scope on Databricks
+    from pyspark.sql import SparkSession
+    _spark = SparkSession.builder.appName("PALM_DataGenerator").getOrCreate()
+    sdf = _spark.createDataFrame(pdf)
     (
         sdf.write
         .format("delta")
