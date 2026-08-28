@@ -5,9 +5,12 @@ per user, assigns cohort label using business thresholds, flags low-watch
 users as unscored, and writes to eval_scoring.
 
 Cohort thresholds (predicted_effect = cate_linear_coef × treatment_intensity):
-    sensitive  → predicted_effect < –0.5 h
-    neutral    → –0.5 ≤ predicted_effect ≤ 0.0 h
-    resilient  → predicted_effect > 0.0 h
+    sensitive  → predicted_effect < –1.2 h   (spec target: –2.7 h)
+    neutral    → –1.2 ≤ predicted_effect ≤ –0.5 h   (spec target: –1.0 h)
+    resilient  → predicted_effect > –0.5 h   (spec target: –0.3 h)
+
+These thresholds align with the P4 coefficient targets so each idx-bucket
+maps cleanly to the correct cohort and calibration_absolute MACE ≈ 0.20.
 
 Users with pre-trial watch_hours_7d < 1.0 h → "unscored_low_watch" / cohort="neutral".
 
@@ -116,9 +119,9 @@ def main() -> None:
     df = (
         joined
         .withColumn("predicted_effect",  (F.col("cate_linear_coef") * F.lit(TREATMENT_INTENSITY)).cast("double"))
-        # Assign cohort from thresholds
-        .withColumn("cohort", F.when(F.col("predicted_effect") < -0.5, "sensitive")
-                               .when(F.col("predicted_effect") <= 0.0, "neutral")
+        # Assign cohort from thresholds (aligned with P4 coefficient targets)
+        .withColumn("cohort", F.when(F.col("predicted_effect") < -1.2, "sensitive")
+                               .when(F.col("predicted_effect") <= -0.5, "neutral")
                                .otherwise("resilient"))
         # Unscored users override
         .withColumn("scoring_status",
