@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 07 — P7: Compute Evaluation Metrics
 # MAGIC
@@ -57,6 +61,10 @@ display(df_metrics.select(
 
 # COMMAND ----------
 
+display(df_metrics)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Sanity check — pass/fail summary
 
@@ -108,3 +116,6 @@ display(
 # MAGIC | offline_evaluation_metrics | P7 ← you are here |
 # MAGIC
 # MAGIC **Next phase:** Build the monitoring dashboard reading from these tables.
+
+# COMMAND ----------
+
