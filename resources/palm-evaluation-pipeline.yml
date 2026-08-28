@@ -1,0 +1,163 @@
+# Deploy: databricks bundle deploy -t dev
+# Run:    databricks bundle run palm_evaluation_pipeline -t dev
+
+# -----------------------------------------------------------------------------
+# PALM Learning — Offline Evaluation Pipeline
+# -----------------------------------------------------------------------------
+# DAG:
+#   generate_source_data
+#          ↓
+#   load_experiment_population
+#          ↓                    ↓
+#   compute_watch_hours    extract_eval_features
+#          ↓                    ↓
+#          |              cate_inference
+#          |                    ↓
+#          └──────────► policy_scoring
+#                              ↓
+#                        merge_and_write
+#                              ↓
+#                        compute_eval_metrics
+#
+# Deploy: databricks bundle deploy -t dev
+# Run:    databricks bundle run palm_evaluation_pipeline -t dev
+# -----------------------------------------------------------------------------
+resources:
+  jobs:
+    palm_evaluation_pipeline:
+      name: "[${bundle.target}] PALM Evaluation Pipeline"
+      max_concurrent_runs: 2
+      parameters:
+        - name: experiment_uuid
+          default: "exp-001-disney-midroll"
+        - name: k_values
+          default: "7"
+
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"
+
+      tasks:
+
+        # Task 0: Generate source tables
+        - task_key: generate_source_data
+          description: "Creates experiment_user_assignments and experiment_config source tables."
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/data_generator.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+
+        # Task 1: Load experiment population (check-if-exists)
+        - task_key: load_experiment_population
+          description: "Joins assignments + config, deduplicates users, writes eval_experiment_population."
+          depends_on:
+            - task_key: generate_source_data
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_load_population.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--force"
+
+        # Task 2: Compute watch hours — runs in parallel with Task 3
+        - task_key: compute_watch_hours
+          description: "Generates synthetic 7-day watch hours per user, writes eval_watch_hours."
+          depends_on:
+            - task_key: load_experiment_population
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_compute_watch_hours.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--k-values"
+              - "{{job.parameters.k_values}}"
+              - "--force"
+
+        # Task 3: Extract user features — runs in parallel with Task 2
+        - task_key: extract_eval_features
+          description: "Computes pre-experiment user features anchored to start_date - 1, writes eval_user_features."
+          depends_on:
+            - task_key: load_experiment_population
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_extract_eval_features.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--force"
+
+        # Task 4: CATE inference — waits for features only
+        - task_key: cate_inference
+          description: "Computes per-user CATE coefficients from features, writes eval_cate_coefficients."
+          depends_on:
+            - task_key: extract_eval_features
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_eval_cate_inference.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--force"
+
+        # Task 5: Policy scoring — waits for CATE
+        - task_key: policy_scoring
+          description: "Assigns cohort labels using CATE + thresholds, writes eval_scoring."
+          depends_on:
+            - task_key: cate_inference
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_eval_policy_scoring.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--force"
+
+        # Task 6: Merge and write — waits for BOTH watch hours AND scoring
+        - task_key: merge_and_write
+          description: "Merges watch_hours + scoring, derives baseline_hps, writes offline_evaluation_results."
+          depends_on:
+            - task_key: compute_watch_hours
+            - task_key: policy_scoring
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_merge_and_write.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--k-values"
+              - "{{job.parameters.k_values}}"
+              - "--force"
+
+        # Task 7: Compute eval metrics — final step
+        - task_key: compute_eval_metrics
+          description: "Computes separation, calibration, ordering metrics, writes offline_evaluation_metrics."
+          depends_on:
+            - task_key: merge_and_write
+          environment_key: serverless
+          spark_python_task:
+            python_file: ../palm/pipelines/run_compute_eval_metrics.py
+            parameters:
+              - "--env"
+              - "${var.env_name}"
+              - "--experiment-uuid"
+              - "{{job.parameters.experiment_uuid}}"
+              - "--k-values"
+              - "{{job.parameters.k_values}}"
+              - "--force"
