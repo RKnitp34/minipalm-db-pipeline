@@ -1,0 +1,2 @@
+databricks bundle deploy -t dev
+databricks bundle run palm_evaluation_pipeline -t dev

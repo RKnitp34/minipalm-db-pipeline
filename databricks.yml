@@ -1,15 +1,11 @@
 # =============================================================================
 # PALM Learning — Root Databricks Asset Bundle Configuration
 # =============================================================================
-# Mirrors production's databricks.yml exactly (bundle name + variables + targets).
+# Mirrors production's databricks.yml structure exactly.
 # The actual job DAG lives in resources/palm-evaluation-pipeline.yml.
 #
-# SETUP STEPS (one-time):
-#   1. Install Databricks CLI:    pip install databricks-cli
-#   2. Authenticate:              databricks configure --token
-#   3. Set your cluster_id below  (Compute → your cluster → three-dot menu → "Copy cluster ID")
-#   4. Deploy bundle:             databricks bundle deploy -t dev
-#   5. Run once manually:         databricks bundle run palm_evaluation_pipeline -t dev
+# Deploy:  databricks bundle deploy -t dev
+# Run:     databricks bundle run palm_evaluation_pipeline -t dev
 # =============================================================================
 
 bundle:
@@ -19,25 +15,32 @@ include:
   - resources/*.yml
 
 # ── Variables ─────────────────────────────────────────────────────────────────
-
 variables:
 
   env_name:
     description: >
       Deployment environment passed as --env to every pipeline script.
-      Resolves the schema name in fixtures/tables.yml:
-        dev  →  main.palm_learning_dev.*
-    default: dev
+      Resolves catalog/schema in fixtures/tables.yml.
+      dev → minipalm.palm_learning_dev.*
 
-  cluster_id:
+  catalog_name:
+    description: Unity Catalog name — REQUIRED, set per target below.
+
+  schema_name:
+    description: Schema name within the catalog.
+    default: palm_learning_dev
+
+
+  experiment_uuid:
     description: >
-      Existing all-purpose cluster ID from Databricks Community Edition.
-      Find it: Compute → your cluster → three-dot menu → "Copy cluster ID"
-      Example: "0812-123456-abc12345"
-    default: ""   # ← FILL THIS IN before deploying
+      Default experiment UUID to run the pipeline for.
+    default: "exp-001-disney-midroll"
+
+  k_values:
+    description: Comma-separated K-day window sizes.
+    default: "7"
 
 # ── Targets ───────────────────────────────────────────────────────────────────
-
 targets:
 
   dev:
@@ -45,6 +48,7 @@ targets:
     default: true
     variables:
       env_name: dev
-      cluster_id: "7474653620881207"   ← uncomment and fill in
+      catalog_name: minipalm
+      schema_name: palm_learning_dev
     workspace:
-      host: "https://dbc-78344414-60c4.cloud.databricks.com/"   # ← FILL IN your CE workspace URL, e.g. https://community.cloud.databricks.com
+      host: "https://dbc-78344414-60c4.cloud.databricks.com"
