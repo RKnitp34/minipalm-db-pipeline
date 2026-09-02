@@ -86,121 +86,121 @@ def main() -> None:
     )
 
     try:
-      results = (
-        spark.table(tables["offline_evaluation_results"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-        .filter(F.col("k_value").isin(k_values))
-        .filter(F.col("model_run_id")    == args.model_run_id)
-        .filter(F.col("t1_scenario")     == args.t1_scenario)
-        .filter(F.col("t0_scenario")     == args.t0_scenario)
-        .filter(F.col("policy_scenario") == args.policy_scenario)
-    )
-    n = results.count()
-    if n == 0:
-        raise RuntimeError(f"offline_evaluation_results empty for {args.experiment_uuid}")
+        results = (
+            spark.table(tables["offline_evaluation_results"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+            .filter(F.col("k_value").isin(k_values))
+            .filter(F.col("model_run_id")    == args.model_run_id)
+            .filter(F.col("t1_scenario")     == args.t1_scenario)
+            .filter(F.col("t0_scenario")     == args.t0_scenario)
+            .filter(F.col("policy_scenario") == args.policy_scenario)
+        )
+        n = results.count()
+        if n == 0:
+            raise RuntimeError(f"offline_evaluation_results empty for {args.experiment_uuid}")
 
-    logging.info("[*] Computing metrics for %d rows", n)
+        logging.info("[*] Computing metrics for %d rows", n)
 
-    # Collect to driver (1000 rows — safe on CE single-node)
-    pdf = results.toPandas()
+        # Collect to driver (1000 rows — safe on CE single-node)
+        pdf = results.toPandas()
 
-    computed_at = datetime.now(tz=timezone.utc)
-    metric_rows = []
+        computed_at = datetime.now(tz=timezone.utc)
+        metric_rows = []
 
-    for k in k_values:
-        sub = pdf[pdf["k_value"] == k]
-        trt = sub[sub["treatment_arm"] != args.control_arm]
-        n_k = len(sub)
+        for k in k_values:
+            sub = pdf[pdf["k_value"] == k]
+            trt = sub[sub["treatment_arm"] != args.control_arm]
+            n_k = len(sub)
 
-        # Per-cohort aggregates (treatment arms)
-        means = trt.groupby("cohort")["watch_hours"].mean()
-        sens_m = means.get("sensitive", float("nan"))
-        neut_m = means.get("neutral",   float("nan"))
-        res_m  = means.get("resilient", float("nan"))
+            # Per-cohort aggregates (treatment arms)
+            means = trt.groupby("cohort")["watch_hours"].mean()
+            sens_m = means.get("sensitive", float("nan"))
+            neut_m = means.get("neutral",   float("nan"))
+            res_m  = means.get("resilient", float("nan"))
 
-        # Baseline HPS per cohort (control arm mean)
-        ctrl_means = sub[sub["treatment_arm"] == args.control_arm].groupby("cohort")["baseline_hps"].first()
-        sens_base  = ctrl_means.get("sensitive", 6.0)
+            # Baseline HPS per cohort (control arm mean)
+            ctrl_means = sub[sub["treatment_arm"] == args.control_arm].groupby("cohort")["baseline_hps"].first()
+            sens_base  = ctrl_means.get("sensitive", 6.0)
 
-        # Actual effects: treatment mean – control mean per cohort
-        actual_effects = {
-            c: means.get(c, float("nan")) - (ctrl_means.get(c, float("nan")))
-            for c in ["sensitive", "neutral", "resilient"]
-        }
-        pred_effects = sub.groupby("cohort")["predicted_effect"].mean().to_dict()
+            # Actual effects: treatment mean – control mean per cohort
+            actual_effects = {
+                c: means.get(c, float("nan")) - (ctrl_means.get(c, float("nan")))
+                for c in ["sensitive", "neutral", "resilient"]
+            }
+            pred_effects = sub.groupby("cohort")["predicted_effect"].mean().to_dict()
 
-        # Metric 1 & 2: separation magnitude
-        sep_mag = round(float(res_m - sens_m), 4) if not (res_m != res_m or sens_m != sens_m) else 0.0
-        rel_sep = round(sep_mag / max(float(sens_base), 1e-6), 4)
+            # Metric 1 & 2: separation magnitude
+            sep_mag = round(float(res_m - sens_m), 4) if not (res_m != res_m or sens_m != sens_m) else 0.0
+            rel_sep = round(sep_mag / max(float(sens_base), 1e-6), 4)
 
-        # Metric 3 & 4: delta ordering
-        order_ok  = bool(sens_m < neut_m < res_m) if not any(v != v for v in [sens_m, neut_m, res_m]) else False
-        rel_order_ok = order_ok  # same check on absolute means for simplicity
+            # Metric 3 & 4: delta ordering
+            order_ok  = bool(sens_m < neut_m < res_m) if not any(v != v for v in [sens_m, neut_m, res_m]) else False
+            rel_order_ok = order_ok  # same check on absolute means for simplicity
 
-        # Metric 5 & 6: calibration
-        abs_errors = [abs(pred_effects.get(c, 0) - actual_effects.get(c, 0))
-                      for c in ["sensitive", "neutral", "resilient"]
-                      if c in pred_effects]
-        mace     = round(sum(abs_errors) / len(abs_errors), 4) if abs_errors else 0.0
-        cal_rel  = round(mace / max(float(sub["baseline_hps"].mean()), 1e-6), 4)
+            # Metric 5 & 6: calibration
+            abs_errors = [abs(pred_effects.get(c, 0) - actual_effects.get(c, 0))
+                          for c in ["sensitive", "neutral", "resilient"]
+                          if c in pred_effects]
+            mace     = round(sum(abs_errors) / len(abs_errors), 4) if abs_errors else 0.0
+            cal_rel  = round(mace / max(float(sub["baseline_hps"].mean()), 1e-6), 4)
 
-        # Metric 7: cohort traits (% in [20%, 50%])
-        cohort_pcts = sub.groupby("cohort").size() / n_k * 100
-        traits_ok = all(20 <= cohort_pcts.get(c, 0) <= 50 for c in ["sensitive", "neutral", "resilient"])
+            # Metric 7: cohort traits (% in [20%, 50%])
+            cohort_pcts = sub.groupby("cohort").size() / n_k * 100
+            traits_ok = all(20 <= cohort_pcts.get(c, 0) <= 50 for c in ["sensitive", "neutral", "resilient"])
 
-        details = json.dumps({
-            "per_cohort": {c: {
-                "n":              int((sub["cohort"] == c).sum()),
-                "actual_effect":  round(float(actual_effects.get(c, 0)), 4),
-                "pred_effect":    round(float(pred_effects.get(c, 0)),   4),
-                "mean_wh":        round(float(means.get(c, 0)),          4),
-                "baseline_hps":   round(float(ctrl_means.get(c, 0)),     4),
-            } for c in ["sensitive", "neutral", "resilient"]}
-        })
-
-        for name, value, passed in [
-            ("separation_magnitude",           sep_mag,               sep_mag > 5.0),
-            ("relative_separation_magnitude",  rel_sep,               rel_sep > 0.5),
-            ("cohort_delta_ordering",          1.0 if order_ok else 0.0,     order_ok),
-            ("cohort_relative_delta_ordering", 1.0 if rel_order_ok else 0.0, rel_order_ok),
-            ("calibration_absolute",           mace,                  mace <= 0.40),
-            ("calibration_relative",           cal_rel,               cal_rel <= 0.05),
-            ("cohort_traits",                  1.0 if traits_ok else 0.0,    traits_ok),
-        ]:
-            metric_rows.append({
-                "experiment_uuid": args.experiment_uuid,
-                "k_value":         k,
-                "model_run_id":    args.model_run_id,
-                "t1_scenario":     args.t1_scenario,
-                "t0_scenario":     args.t0_scenario,
-                "policy_scenario": args.policy_scenario,
-                "metric_name":     name,
-                "passed":          bool(passed),
-                "pass_rate":       None,
-                "metric_value":    round(float(value), 4),
-                "details_json":    details,
-                "computed_at":     computed_at,
-                "n_users":         n_k,
+            details = json.dumps({
+                "per_cohort": {c: {
+                    "n":              int((sub["cohort"] == c).sum()),
+                    "actual_effect":  round(float(actual_effects.get(c, 0)), 4),
+                    "pred_effect":    round(float(pred_effects.get(c, 0)),   4),
+                    "mean_wh":        round(float(means.get(c, 0)),          4),
+                    "baseline_hps":   round(float(ctrl_means.get(c, 0)),     4),
+                } for c in ["sensitive", "neutral", "resilient"]}
             })
 
-    import pandas as pd  # noqa: PLC0415
-    metrics_df  = pd.DataFrame(metric_rows)
-    metrics_sdf = spark.createDataFrame(metrics_df)
+            for name, value, passed in [
+                ("separation_magnitude",           sep_mag,               sep_mag > 5.0),
+                ("relative_separation_magnitude",  rel_sep,               rel_sep > 0.5),
+                ("cohort_delta_ordering",          1.0 if order_ok else 0.0,     order_ok),
+                ("cohort_relative_delta_ordering", 1.0 if rel_order_ok else 0.0, rel_order_ok),
+                ("calibration_absolute",           mace,                  mace <= 0.40),
+                ("calibration_relative",           cal_rel,               cal_rel <= 0.05),
+                ("cohort_traits",                  1.0 if traits_ok else 0.0,    traits_ok),
+            ]:
+                metric_rows.append({
+                    "experiment_uuid": args.experiment_uuid,
+                    "k_value":         k,
+                    "model_run_id":    args.model_run_id,
+                    "t1_scenario":     args.t1_scenario,
+                    "t0_scenario":     args.t0_scenario,
+                    "policy_scenario": args.policy_scenario,
+                    "metric_name":     name,
+                    "passed":          bool(passed),
+                    "pass_rate":       None,
+                    "metric_value":    round(float(value), 4),
+                    "details_json":    details,
+                    "computed_at":     computed_at,
+                    "n_users":         n_k,
+                })
 
-    replace_where = (
-        f"experiment_uuid = '{args.experiment_uuid}' "
-        f"AND k_value IN ({','.join(str(k) for k in k_values)}) "
-        f"AND model_run_id = '{args.model_run_id}' "
-        f"AND t1_scenario = '{args.t1_scenario}' "
-        f"AND t0_scenario = '{args.t0_scenario}' "
-        f"AND policy_scenario = '{args.policy_scenario}'"
-    )
-    write_or_create(
-        metrics_sdf, spark, tables["offline_evaluation_metrics"],
-        partition_by=["experiment_uuid", "k_value", "model_run_id",
-                      "t1_scenario", "t0_scenario", "policy_scenario"],
-        replace_where=replace_where,
-    )
+        import pandas as pd  # noqa: PLC0415
+        metrics_df  = pd.DataFrame(metric_rows)
+        metrics_sdf = spark.createDataFrame(metrics_df)
+
+        replace_where = (
+            f"experiment_uuid = '{args.experiment_uuid}' "
+            f"AND k_value IN ({','.join(str(k) for k in k_values)}) "
+            f"AND model_run_id = '{args.model_run_id}' "
+            f"AND t1_scenario = '{args.t1_scenario}' "
+            f"AND t0_scenario = '{args.t0_scenario}' "
+            f"AND policy_scenario = '{args.policy_scenario}'"
+        )
+        write_or_create(
+            metrics_sdf, spark, tables["offline_evaluation_metrics"],
+            partition_by=["experiment_uuid", "k_value", "model_run_id",
+                          "t1_scenario", "t0_scenario", "policy_scenario"],
+            replace_where=replace_where,
+        )
         logging.info("[*] Written %d metric rows → %s", len(metric_rows), tables["offline_evaluation_metrics"])
         for row in metric_rows:
             logging.info("    %s = %.4f  passed=%s", row["metric_name"], row["metric_value"], row["passed"])
