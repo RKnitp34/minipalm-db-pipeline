@@ -52,11 +52,3 @@ targets:
       schema_name: palm_learning_dev
     workspace:
       host: "https://dbc-78344414-60c4.cloud.databricks.com"
-
-
-
-# Add this under the job definition in databricks.yml
-schedule:
-  quartz_cron_expression: "0 15 13 * * ?" # Run at 1:15 PM IST today (for testing)
-  timezone_id: "Asia/Kolkata"
-  pause_status: UNPAUSED

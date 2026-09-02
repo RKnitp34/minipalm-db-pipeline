@@ -27,6 +27,13 @@ resources:
     palm_evaluation_pipeline:
       name: "[${bundle.target}] PALM Evaluation Pipeline"
       max_concurrent_runs: 2
+      
+      # Schedule: Run at 1:20 PM IST (for testing job_run_id)
+      schedule:
+        quartz_cron_expression: "0 20 13 * * ?"  # 1:20 PM IST today
+        timezone_id: "Asia/Kolkata"
+        pause_status: UNPAUSED
+      
       parameters:
         - name: experiment_uuid
           default: "exp-001-disney-midroll"
