@@ -72,3 +72,11 @@ pipeline:
     catalog: "workspace"
     schema:  "palm_learning_{env}"
     table:   offline_evaluation_metrics
+
+  # ── Monitoring ──────────────────────────────────────────────────────────────
+
+  # Run log — append-only, one row per task per run
+  pipeline_run_log:
+    catalog: "workspace"
+    schema:  "palm_learning_{env}"
+    table:   pipeline_run_log

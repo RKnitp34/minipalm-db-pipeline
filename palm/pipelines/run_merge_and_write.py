@@ -31,6 +31,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import (  # noqa: E402
     build_table_vars, validate_experiment_id, validate_scenario_name,
@@ -66,71 +67,84 @@ def main() -> None:
     validate_scenario_name(args.policy_scenario, label="policy_scenario")
     k_values = [int(k.strip()) for k in args.k_values.split(",")]
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P6_MergeWrite").getOrCreate()
     tables = build_table_vars(args.env)
     output = tables["offline_evaluation_results"]
 
-    watch_hours = (
-        spark.table(tables["eval_watch_hours"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-        .filter(F.col("k_value").isin(k_values))
-    )
-    scoring = (
-        spark.table(tables["eval_scoring"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-        .filter(F.col("model_run_id")    == args.model_run_id)
-        .filter(F.col("t1_scenario")     == args.t1_scenario)
-        .filter(F.col("t0_scenario")     == args.t0_scenario)
-        .filter(F.col("policy_scenario") == args.policy_scenario)
-        .select("account_id", "experiment_uuid", "cohort",
-                "predicted_effect", "predicted_uplift", "scoring_status")
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p6_merge_and_write", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
     )
 
-    merged = watch_hours.join(scoring, on=["account_id", "experiment_uuid"], how="inner")
-    n      = merged.count()
-    if n == 0:
-        raise RuntimeError(f"Join produced 0 rows for {args.experiment_uuid}")
-    logging.info("[*] Merged %d rows", n)
-
-    # Compute baseline_hps: mean control-arm watch_hours per (experiment, cohort)
-    baseline = (
-        merged
-        .filter(F.col("treatment_arm") == args.control_arm)
-        .groupBy("experiment_uuid", "cohort")
-        .agg(F.round(F.mean("watch_hours"), 4).alias("baseline_hps"))
-    )
-
-    result = (
-        merged
-        .join(baseline, on=["experiment_uuid", "cohort"], how="left")
-        .withColumn("model_run_id",    F.lit(args.model_run_id))
-        .withColumn("t1_scenario",     F.lit(args.t1_scenario))
-        .withColumn("t0_scenario",     F.lit(args.t0_scenario))
-        .withColumn("policy_scenario", F.lit(args.policy_scenario))
-        .select(
-            "account_id", "experiment_uuid", "k_value", "treatment_arm",
-            "treatment_uuid", "watch_hours", "cohort", "predicted_effect",
-            "predicted_uplift", "scoring_status", "baseline_hps",
-            "model_run_id", "t1_scenario", "t0_scenario", "policy_scenario",
+    try:
+        watch_hours = (
+            spark.table(tables["eval_watch_hours"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+            .filter(F.col("k_value").isin(k_values))
         )
-    )
+        scoring = (
+            spark.table(tables["eval_scoring"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+            .filter(F.col("model_run_id")    == args.model_run_id)
+            .filter(F.col("t1_scenario")     == args.t1_scenario)
+            .filter(F.col("t0_scenario")     == args.t0_scenario)
+            .filter(F.col("policy_scenario") == args.policy_scenario)
+            .select("account_id", "experiment_uuid", "cohort",
+                    "predicted_effect", "predicted_uplift", "scoring_status")
+        )
 
-    k_list = ",".join(str(k) for k in k_values)
-    replace_where = (
-        f"experiment_uuid = '{args.experiment_uuid}' "
-        f"AND k_value IN ({k_list}) "
-        f"AND model_run_id = '{args.model_run_id}' "
-        f"AND t1_scenario = '{args.t1_scenario}' "
-        f"AND t0_scenario = '{args.t0_scenario}' "
-        f"AND policy_scenario = '{args.policy_scenario}'"
-    )
-    write_or_create(
-        result, spark, output,
-        partition_by=["experiment_uuid", "k_value", "model_run_id",
-                      "t1_scenario", "t0_scenario", "policy_scenario"],
-        replace_where=replace_where,
-    )
-    logging.info("[*] Written %d rows → %s", n, output)
+        merged = watch_hours.join(scoring, on=["account_id", "experiment_uuid"], how="inner")
+        n      = merged.count()
+        if n == 0:
+            raise RuntimeError(f"Join produced 0 rows for {args.experiment_uuid}")
+        logging.info("[*] Merged %d rows", n)
+
+        # Compute baseline_hps: mean control-arm watch_hours per (experiment, cohort)
+        baseline = (
+            merged
+            .filter(F.col("treatment_arm") == args.control_arm)
+            .groupBy("experiment_uuid", "cohort")
+            .agg(F.round(F.mean("watch_hours"), 4).alias("baseline_hps"))
+        )
+
+        result = (
+            merged
+            .join(baseline, on=["experiment_uuid", "cohort"], how="left")
+            .withColumn("model_run_id",    F.lit(args.model_run_id))
+            .withColumn("t1_scenario",     F.lit(args.t1_scenario))
+            .withColumn("t0_scenario",     F.lit(args.t0_scenario))
+            .withColumn("policy_scenario", F.lit(args.policy_scenario))
+            .select(
+                "account_id", "experiment_uuid", "k_value", "treatment_arm",
+                "treatment_uuid", "watch_hours", "cohort", "predicted_effect",
+                "predicted_uplift", "scoring_status", "baseline_hps",
+                "model_run_id", "t1_scenario", "t0_scenario", "policy_scenario",
+            )
+        )
+
+        k_list = ",".join(str(k) for k in k_values)
+        replace_where = (
+            f"experiment_uuid = '{args.experiment_uuid}' "
+            f"AND k_value IN ({k_list}) "
+            f"AND model_run_id = '{args.model_run_id}' "
+            f"AND t1_scenario = '{args.t1_scenario}' "
+            f"AND t0_scenario = '{args.t0_scenario}' "
+            f"AND policy_scenario = '{args.policy_scenario}'"
+        )
+        write_or_create(
+            result, spark, output,
+            partition_by=["experiment_uuid", "k_value", "model_run_id",
+                          "t1_scenario", "t0_scenario", "policy_scenario"],
+            replace_where=replace_where,
+        )
+        logging.info("[*] Written %d rows → %s", n, output)
+        run_logger.success(rows_written=n)
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

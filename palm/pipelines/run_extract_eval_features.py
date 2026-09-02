@@ -40,6 +40,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import build_table_vars, validate_experiment_id  # noqa: E402
 
@@ -82,9 +83,16 @@ def main() -> None:
     args = parse_args()
     validate_experiment_id(args.experiment_uuid)
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P3_EvalFeatures").getOrCreate()
     tables = build_table_vars(args.env)
     output = tables["eval_user_features"]
+
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p3_extract_eval_features", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
 
     # ── Check-if-exists ───────────────────────────────────────────────────────
     if not args.force and spark.catalog.tableExists(output):
@@ -95,33 +103,40 @@ def main() -> None:
         )
         if existing > 0:
             logging.info("[*] Features already exist for %s — skipping", args.experiment_uuid)
+            run_logger.skip()
             return
 
-    population = (
-        spark.table(tables["eval_experiment_population"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-    )
-    n = population.count()
-    if n == 0:
-        raise RuntimeError(f"eval_experiment_population empty for {args.experiment_uuid}")
+    try:
+        population = (
+            spark.table(tables["eval_experiment_population"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+        )
+        n = population.count()
+        if n == 0:
+            raise RuntimeError(f"eval_experiment_population empty for {args.experiment_uuid}")
 
-    logging.info("[*] Extracting features for %d users", n)
-    df = (
-        population
-        .withColumn("dataset_date",    (F.col("experiment_start_date") - F.expr("INTERVAL 1 DAY")).cast("date"))
-        .withColumn("watch_hours_7d",  synthetic_wh7d_udf(F.col("account_id")))
-        .withColumn("watch_hours_30d", synthetic_wh30d_udf(F.col("account_id")))
-        .withColumn("content_type",    synthetic_content_type_udf(F.col("account_id")))
-        .select("account_id", "experiment_uuid", "dataset_date",
-                "watch_hours_7d", "watch_hours_30d", "content_type")
-    )
+        logging.info("[*] Extracting features for %d users", n)
+        df = (
+            population
+            .withColumn("dataset_date",    (F.col("experiment_start_date") - F.expr("INTERVAL 1 DAY")).cast("date"))
+            .withColumn("watch_hours_7d",  synthetic_wh7d_udf(F.col("account_id")))
+            .withColumn("watch_hours_30d", synthetic_wh30d_udf(F.col("account_id")))
+            .withColumn("content_type",    synthetic_content_type_udf(F.col("account_id")))
+            .select("account_id", "experiment_uuid", "dataset_date",
+                    "watch_hours_7d", "watch_hours_30d", "content_type")
+        )
 
-    write_or_create(
-        df, spark, output,
-        partition_by=["experiment_uuid"],
-        replace_where=f"experiment_uuid = '{args.experiment_uuid}'",
-    )
-    logging.info("[*] Written %d rows → %s", n, output)
+        write_or_create(
+            df, spark, output,
+            partition_by=["experiment_uuid"],
+            replace_where=f"experiment_uuid = '{args.experiment_uuid}'",
+        )
+        logging.info("[*] Written %d rows → %s", n, output)
+        run_logger.success(rows_written=n)
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

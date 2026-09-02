@@ -31,6 +31,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import build_table_vars, validate_experiment_id  # noqa: E402
 
@@ -83,9 +84,16 @@ def main() -> None:
     args = parse_args()
     validate_experiment_id(args.experiment_uuid)
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P1_LoadPopulation").getOrCreate()
     tables = build_table_vars(args.env)
     output = tables["eval_experiment_population"]
+
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p1_load_population", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
 
     # ── Check-if-exists (skip if data already there) ──────────────────────────
     if not args.force and spark.catalog.tableExists(output):
@@ -96,25 +104,32 @@ def main() -> None:
         )
         if existing > 0:
             logging.info("[*] Population already exists for %s — skipping (use --force to recompute)", args.experiment_uuid)
+            run_logger.skip()
             return
 
-    logging.info("[*] Loading population for %s", args.experiment_uuid)
-    df = load_population(spark, tables, args.experiment_uuid)
+    try:
+        logging.info("[*] Loading population for %s", args.experiment_uuid)
+        df = load_population(spark, tables, args.experiment_uuid)
 
-    n = df.count()
-    if n == 0:
-        raise RuntimeError(
-            f"No users found for experiment_uuid={args.experiment_uuid}. "
-            "Did data_generator run first?"
+        n = df.count()
+        if n == 0:
+            raise RuntimeError(
+                f"No users found for experiment_uuid={args.experiment_uuid}. "
+                "Did data_generator run first?"
+            )
+        logging.info("[*] Population: %d users", n)
+
+        write_or_create(
+            df, spark, output,
+            partition_by=["experiment_uuid"],
+            replace_where=f"experiment_uuid = '{args.experiment_uuid}'",
         )
-    logging.info("[*] Population: %d users", n)
+        logging.info("[*] Written %d rows to %s", n, output)
+        run_logger.success(rows_written=n)
 
-    write_or_create(
-        df, spark, output,
-        partition_by=["experiment_uuid"],
-        replace_where=f"experiment_uuid = '{args.experiment_uuid}'",
-    )
-    logging.info("[*] Written %d rows to %s", n, output)
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

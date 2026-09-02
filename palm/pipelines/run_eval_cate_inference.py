@@ -42,6 +42,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import build_table_vars, validate_experiment_id  # noqa: E402
 
@@ -71,10 +72,17 @@ def main() -> None:
     args = parse_args()
     validate_experiment_id(args.experiment_uuid)
 
+    from datetime import date  # noqa: PLC0415
     spark       = SparkSession.builder.appName("PALM_P4_CATEInference").getOrCreate()
     tables      = build_table_vars(args.env)
     output      = tables["eval_cate_coefficients"]
     model_run   = args.model_run_id
+
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p4_cate_inference", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
 
     # ── Check-if-exists ───────────────────────────────────────────────────────
     if not args.force and spark.catalog.tableExists(output):
@@ -88,36 +96,43 @@ def main() -> None:
         )
         if existing > 0:
             logging.info("[*] CATE coefficients exist for %s / %s — skipping", args.experiment_uuid, model_run)
+            run_logger.skip()
             return
 
-    features = (
-        spark.table(tables["eval_user_features"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-    )
-    n = features.count()
-    if n == 0:
-        raise RuntimeError(f"eval_user_features empty for {args.experiment_uuid}")
+    try:
+        features = (
+            spark.table(tables["eval_user_features"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+        )
+        n = features.count()
+        if n == 0:
+            raise RuntimeError(f"eval_user_features empty for {args.experiment_uuid}")
 
-    logging.info("[*] Running CATE inference for %d users (model=%s)", n, model_run)
-    df = (
-        features
-        .withColumn("model_run_id",       F.lit(model_run))
-        .withColumn("cate_linear_coef",   cate_coef_udf(F.col("account_id"), F.col("watch_hours_30d")))
-        .withColumn("cate_linear_coef_lb", F.col("cate_linear_coef") - F.lit(0.15))
-        .withColumn("cate_linear_coef_ub", F.col("cate_linear_coef") + F.lit(0.15))
-        .select("account_id", "experiment_uuid", "model_run_id",
-                "cate_linear_coef", "cate_linear_coef_lb", "cate_linear_coef_ub")
-    )
+        logging.info("[*] Running CATE inference for %d users (model=%s)", n, model_run)
+        df = (
+            features
+            .withColumn("model_run_id",       F.lit(model_run))
+            .withColumn("cate_linear_coef",   cate_coef_udf(F.col("account_id"), F.col("watch_hours_30d")))
+            .withColumn("cate_linear_coef_lb", F.col("cate_linear_coef") - F.lit(0.15))
+            .withColumn("cate_linear_coef_ub", F.col("cate_linear_coef") + F.lit(0.15))
+            .select("account_id", "experiment_uuid", "model_run_id",
+                    "cate_linear_coef", "cate_linear_coef_lb", "cate_linear_coef_ub")
+        )
 
-    write_or_create(
-        df, spark, output,
-        partition_by=["experiment_uuid", "model_run_id"],
-        replace_where=(
-            f"experiment_uuid = '{args.experiment_uuid}' "
-            f"AND model_run_id = '{model_run}'"
-        ),
-    )
-    logging.info("[*] Written %d rows → %s", n, output)
+        write_or_create(
+            df, spark, output,
+            partition_by=["experiment_uuid", "model_run_id"],
+            replace_where=(
+                f"experiment_uuid = '{args.experiment_uuid}' "
+                f"AND model_run_id = '{model_run}'"
+            ),
+        )
+        logging.info("[*] Written %d rows → %s", n, output)
+        run_logger.success(rows_written=n)
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

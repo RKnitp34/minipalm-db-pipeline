@@ -39,6 +39,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import (  # noqa: E402
     build_table_vars, validate_experiment_id, validate_scenario_name,
@@ -74,10 +75,18 @@ def main() -> None:
     validate_scenario_name(args.policy_scenario, label="policy_scenario")
     k_values = [int(k.strip()) for k in args.k_values.split(",")]
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P7_EvalMetrics").getOrCreate()
     tables = build_table_vars(args.env)
 
-    results = (
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p7_compute_eval_metrics", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
+
+    try:
+      results = (
         spark.table(tables["offline_evaluation_results"])
         .filter(F.col("experiment_uuid") == args.experiment_uuid)
         .filter(F.col("k_value").isin(k_values))
@@ -192,9 +201,14 @@ def main() -> None:
                       "t1_scenario", "t0_scenario", "policy_scenario"],
         replace_where=replace_where,
     )
-    logging.info("[*] Written %d metric rows → %s", len(metric_rows), tables["offline_evaluation_metrics"])
-    for row in metric_rows:
-        logging.info("    %s = %.4f  passed=%s", row["metric_name"], row["metric_value"], row["passed"])
+        logging.info("[*] Written %d metric rows → %s", len(metric_rows), tables["offline_evaluation_metrics"])
+        for row in metric_rows:
+            logging.info("    %s = %.4f  passed=%s", row["metric_name"], row["metric_value"], row["passed"])
+        run_logger.success(rows_written=len(metric_rows))
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

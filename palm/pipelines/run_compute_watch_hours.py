@@ -40,6 +40,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import build_table_vars, validate_experiment_id  # noqa: E402
 
@@ -87,9 +88,16 @@ def main() -> None:
     validate_experiment_id(args.experiment_uuid)
     k_values = [int(k.strip()) for k in args.k_values.split(",")]
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P2_WatchHours").getOrCreate()
     tables = build_table_vars(args.env)
     output = tables["eval_watch_hours"]
+
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p2_compute_watch_hours", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
 
     # ── Check-if-exists ───────────────────────────────────────────────────────
     if not args.force and spark.catalog.tableExists(output):
@@ -102,37 +110,47 @@ def main() -> None:
         k_values = [k for k in k_values if k not in existing_ks]
         if not k_values:
             logging.info("[*] Watch hours already exist — skipping")
+            run_logger.skip()
             return
         logging.info("[*] Missing k_values: %s", k_values)
 
-    population = (
-        spark.table(tables["eval_experiment_population"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-    )
-    n = population.count()
-    if n == 0:
-        raise RuntimeError(f"eval_experiment_population is empty for {args.experiment_uuid}")
+    try:
+        population = (
+            spark.table(tables["eval_experiment_population"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+        )
+        n = population.count()
+        if n == 0:
+            raise RuntimeError(f"eval_experiment_population is empty for {args.experiment_uuid}")
 
-    for k in k_values:
-        logging.info("[*] Computing watch_hours for k=%d (%d users)", k, n)
-        df = (
-            population
-            .withColumn("k_value",     F.lit(k))
-            .withColumn("watch_hours", synthetic_watch_hours_udf(
-                F.col("account_id"), F.col("treatment_arm"), F.lit(k)
-            ))
-            .select("account_id", "experiment_uuid", "experiment_name",
-                    "treatment_arm", "treatment_uuid", "k_value", "watch_hours")
-        )
-        k_list = ",".join(str(kv) for kv in k_values)
-        write_or_create(
-            df, spark, output,
-            partition_by=["experiment_uuid", "k_value"],
-            replace_where=(
-                f"experiment_uuid = '{args.experiment_uuid}' AND k_value IN ({k_list})"
-            ),
-        )
-        logging.info("[*] Written k=%d → %s", k, output)
+        total_rows = 0
+        for k in k_values:
+            logging.info("[*] Computing watch_hours for k=%d (%d users)", k, n)
+            df = (
+                population
+                .withColumn("k_value",     F.lit(k))
+                .withColumn("watch_hours", synthetic_watch_hours_udf(
+                    F.col("account_id"), F.col("treatment_arm"), F.lit(k)
+                ))
+                .select("account_id", "experiment_uuid", "experiment_name",
+                        "treatment_arm", "treatment_uuid", "k_value", "watch_hours")
+            )
+            k_list = ",".join(str(kv) for kv in k_values)
+            write_or_create(
+                df, spark, output,
+                partition_by=["experiment_uuid", "k_value"],
+                replace_where=(
+                    f"experiment_uuid = '{args.experiment_uuid}' AND k_value IN ({k_list})"
+                ),
+            )
+            total_rows += n
+            logging.info("[*] Written k=%d → %s", k, output)
+
+        run_logger.success(rows_written=total_rows)
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

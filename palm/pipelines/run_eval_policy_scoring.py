@@ -38,6 +38,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_script_path)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palm.common.run_logger import PipelineRunLogger  # noqa: E402
 from palm.common.spark_io import write_or_create  # noqa: E402
 from palm.common.tables import (  # noqa: E402
     build_table_vars, validate_experiment_id, validate_scenario_name,
@@ -71,9 +72,16 @@ def main() -> None:
     validate_scenario_name(args.t0_scenario,     label="t0_scenario")
     validate_scenario_name(args.policy_scenario, label="policy_scenario")
 
+    from datetime import date  # noqa: PLC0415
     spark  = SparkSession.builder.appName("PALM_P5_PolicyScoring").getOrCreate()
     tables = build_table_vars(args.env)
     output = tables["eval_scoring"]
+
+    run_logger = PipelineRunLogger(
+        spark=spark, log_table=tables["pipeline_run_log"],
+        task_key="p5_policy_scoring", dataset_date=str(date.today()),
+        experiment_uuid=args.experiment_uuid, env=args.env,
+    )
 
     # ── Check-if-exists ───────────────────────────────────────────────────────
     if not args.force and spark.catalog.tableExists(output):
@@ -90,70 +98,77 @@ def main() -> None:
         )
         if existing > 0:
             logging.info("[*] Scoring partition already exists — skipping")
+            run_logger.skip()
             return
 
-    cate = (
-        spark.table(tables["eval_cate_coefficients"])
-        .filter(
-            (F.col("experiment_uuid") == args.experiment_uuid)
-            & (F.col("model_run_id")   == args.model_run_id)
+    try:
+        cate = (
+            spark.table(tables["eval_cate_coefficients"])
+            .filter(
+                (F.col("experiment_uuid") == args.experiment_uuid)
+                & (F.col("model_run_id")   == args.model_run_id)
+            )
         )
-    )
-    features = (
-        spark.table(tables["eval_user_features"])
-        .filter(F.col("experiment_uuid") == args.experiment_uuid)
-        .select("account_id", "experiment_uuid", "watch_hours_7d")
-    )
+        features = (
+            spark.table(tables["eval_user_features"])
+            .filter(F.col("experiment_uuid") == args.experiment_uuid)
+            .select("account_id", "experiment_uuid", "watch_hours_7d")
+        )
 
-    joined = cate.join(features, on=["account_id", "experiment_uuid"], how="inner")
-    n      = joined.count()
-    if n == 0:
-        raise RuntimeError(f"No CATE coefficients found for {args.experiment_uuid} / {args.model_run_id}")
+        joined = cate.join(features, on=["account_id", "experiment_uuid"], how="inner")
+        n      = joined.count()
+        if n == 0:
+            raise RuntimeError(f"No CATE coefficients found for {args.experiment_uuid} / {args.model_run_id}")
 
-    logging.info("[*] Scoring %d users", n)
+        logging.info("[*] Scoring %d users", n)
 
-    # Predicted effect = coefficient × treatment_intensity
-    df = (
-        joined
-        .withColumn("predicted_effect",  (F.col("cate_linear_coef") * F.lit(TREATMENT_INTENSITY)).cast("double"))
-        # Assign cohort from thresholds
-        .withColumn("cohort", F.when(F.col("predicted_effect") < -0.5, "sensitive")
-                               .when(F.col("predicted_effect") <= 0.0, "neutral")
-                               .otherwise("resilient"))
-        # Unscored users override
-        .withColumn("scoring_status",
-                    F.when(F.col("watch_hours_7d") < UNSCORED_WATCH_FLOOR, "unscored_low_watch")
-                     .otherwise("scored"))
-        .withColumn("cohort",
-                    F.when(F.col("scoring_status") == "unscored_low_watch", "neutral")
-                     .otherwise(F.col("cohort")))
-        .withColumn("predicted_uplift",
-                    F.round(F.col("predicted_effect") /
-                            F.when(F.col("cohort") == "sensitive", 6.0)
-                             .when(F.col("cohort") == "neutral",   8.0)
-                             .otherwise(10.0), 4))
-        .withColumn("model_run_id",    F.lit(args.model_run_id))
-        .withColumn("t1_scenario",     F.lit(args.t1_scenario))
-        .withColumn("t0_scenario",     F.lit(args.t0_scenario))
-        .withColumn("policy_scenario", F.lit(args.policy_scenario))
-        .select("account_id", "experiment_uuid", "cohort", "predicted_effect",
-                "predicted_uplift", "scoring_status", "model_run_id",
-                "t1_scenario", "t0_scenario", "policy_scenario")
-    )
+        # Predicted effect = coefficient × treatment_intensity
+        df = (
+            joined
+            .withColumn("predicted_effect",  (F.col("cate_linear_coef") * F.lit(TREATMENT_INTENSITY)).cast("double"))
+            # Assign cohort from thresholds
+            .withColumn("cohort", F.when(F.col("predicted_effect") < -0.5, "sensitive")
+                                   .when(F.col("predicted_effect") <= 0.0, "neutral")
+                                   .otherwise("resilient"))
+            # Unscored users override
+            .withColumn("scoring_status",
+                        F.when(F.col("watch_hours_7d") < UNSCORED_WATCH_FLOOR, "unscored_low_watch")
+                         .otherwise("scored"))
+            .withColumn("cohort",
+                        F.when(F.col("scoring_status") == "unscored_low_watch", "neutral")
+                         .otherwise(F.col("cohort")))
+            .withColumn("predicted_uplift",
+                        F.round(F.col("predicted_effect") /
+                                F.when(F.col("cohort") == "sensitive", 6.0)
+                                 .when(F.col("cohort") == "neutral",   8.0)
+                                 .otherwise(10.0), 4))
+            .withColumn("model_run_id",    F.lit(args.model_run_id))
+            .withColumn("t1_scenario",     F.lit(args.t1_scenario))
+            .withColumn("t0_scenario",     F.lit(args.t0_scenario))
+            .withColumn("policy_scenario", F.lit(args.policy_scenario))
+            .select("account_id", "experiment_uuid", "cohort", "predicted_effect",
+                    "predicted_uplift", "scoring_status", "model_run_id",
+                    "t1_scenario", "t0_scenario", "policy_scenario")
+        )
 
-    replace_where = (
-        f"experiment_uuid = '{args.experiment_uuid}' "
-        f"AND model_run_id = '{args.model_run_id}' "
-        f"AND t1_scenario = '{args.t1_scenario}' "
-        f"AND t0_scenario = '{args.t0_scenario}' "
-        f"AND policy_scenario = '{args.policy_scenario}'"
-    )
-    write_or_create(
-        df, spark, output,
-        partition_by=["experiment_uuid", "model_run_id", "t1_scenario", "t0_scenario", "policy_scenario"],
-        replace_where=replace_where,
-    )
-    logging.info("[*] Written %d rows → %s", n, output)
+        replace_where = (
+            f"experiment_uuid = '{args.experiment_uuid}' "
+            f"AND model_run_id = '{args.model_run_id}' "
+            f"AND t1_scenario = '{args.t1_scenario}' "
+            f"AND t0_scenario = '{args.t0_scenario}' "
+            f"AND policy_scenario = '{args.policy_scenario}'"
+        )
+        write_or_create(
+            df, spark, output,
+            partition_by=["experiment_uuid", "model_run_id", "t1_scenario", "t0_scenario", "policy_scenario"],
+            replace_where=replace_where,
+        )
+        logging.info("[*] Written %d rows → %s", n, output)
+        run_logger.success(rows_written=n)
+
+    except Exception as exc:
+        run_logger.fail(error=str(exc))
+        raise
 
 
 if __name__ == "__main__":
