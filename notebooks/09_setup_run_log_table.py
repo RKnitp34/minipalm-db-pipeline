@@ -84,3 +84,15 @@ display(df)
 
 # COMMAND ----------
 
+# MAGIC %sql 
+# MAGIC
+# MAGIC
+# MAGIC select * from (
+# MAGIC select *, 
+# MAGIC
+# MAGIC rank() over(partition by dataset_date, env, task_key order by started_at desc) as last_run_start
+# MAGIC  from workspace.palm_learning_dev.pipeline_run_log ) a where a.last_run_start = 1 
+# MAGIC
+
+# COMMAND ----------
+
