@@ -29,9 +29,8 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE SCHEMA IF NOT EXISTS workspace.palm_learning_dev;
-# MAGIC
-# MAGIC SHOW SCHEMAS IN workspace;
+# MAGIC CREATE SCHEMA IF NOT EXISTS minipalm.palm_learning_dev;
+# MAGIC SHOW SCHEMAS IN minipalm;
 
 # COMMAND ----------
 
@@ -41,18 +40,10 @@
 # COMMAND ----------
 
 import sys
-import os
 
-# Databricks Repos mount point
-REPO_ROOT = "/Workspace/Repos"
-
-# Find this repo's root dynamically — works regardless of username
 notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-# notebook_path looks like: /Repos/<user>/minipalm-db-pipeline/notebooks/00_setup_source_tables
-repo_root = "/Workspace" + "/".join(notebook_path.split("/")[:4])  # /Workspace/Repos/<user>/<repo>
-
+repo_root = "/Workspace" + "/".join(notebook_path.split("/")[:4])
 print(f"Repo root detected: {repo_root}")
-
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
@@ -66,12 +57,10 @@ if repo_root not in sys.path:
 import sys as _sys
 import importlib
 
-# Simulate CLI args that data_generator.main() would receive
 _sys.argv = ["data_generator.py", "--env", "dev"]
 
-# Import and run
 import palm.data_generator as dg
-importlib.reload(dg)  # Reload in case of cached imports from a previous cell run
+importlib.reload(dg)
 dg.main()
 
 # COMMAND ----------
@@ -103,15 +92,19 @@ display(df_config)
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, count
+from pyspark.sql.functions import count
 
-print("Arms distribution (should be ~30% control / 40% treatment_1 / 30% treatment_2):")
+print("Arms distribution (~30% control / 40% treatment_1 / 30% treatment_2):")
 display(
     df_assignments
     .groupBy("experiment_uuid", "treatment_arm")
     .agg(count("*").alias("user_count"))
     .orderBy("experiment_uuid", "treatment_arm")
 )
+
+# COMMAND ----------
+
+print("rakesh")
 
 # COMMAND ----------
 
