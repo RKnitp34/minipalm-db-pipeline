@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 09 — Setup Pipeline Run Log Table
 # MAGIC
@@ -69,3 +73,14 @@ display(df)
 # MAGIC
 # MAGIC **Next step:** Run the full DAB pipeline job or any individual notebook (P1–P7).
 # MAGIC After the run, come back here and re-run Step 3 to see the log entries.
+
+# COMMAND ----------
+
+# Step 4 Run the full DAP pipeline then run this notebook to see the results
+
+df = spark.table("workspace.palm_learning_dev.pipeline_run_log")
+print(f"Rows in pipeline_run_log: {df.count()}")
+display(df)
+
+# COMMAND ----------
+
