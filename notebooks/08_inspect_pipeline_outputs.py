@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # 08 — Inspect Pipeline Outputs
 # MAGIC
@@ -241,6 +245,11 @@ display(df_metrics)
 
 # COMMAND ----------
 
+df_metrics.select("computed_at").distinct().orderBy("computed_at").show(100, truncate=False)
+
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ### P7: pass/fail summary
 
@@ -309,3 +318,6 @@ for t in tables_to_check:
 
 # MAGIC %md
 # MAGIC ✅ If all tables have rows and all 7 metrics show `passed = True`, the end-to-end pipeline is working correctly.
+
+# COMMAND ----------
+
